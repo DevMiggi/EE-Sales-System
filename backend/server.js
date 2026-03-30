@@ -13,11 +13,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
-const mysql = require('mysql2');
-
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT),
+  port: Number(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
@@ -97,7 +95,10 @@ app.post("/register", async (req, res) => {
     });
   } catch (error) {
     console.error("REGISTER ERROR:", error);
-    return res.status(500).json({ message: "Server error during registration." });
+    return res.status(500).json({
+      message: "Server error during registration.",
+      error: error.message
+    });
   }
 });
 
@@ -130,7 +131,7 @@ app.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, email: user.email, role: user.role || "user" },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
@@ -142,12 +143,15 @@ app.post("/login", async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role || "user"
       }
     });
   } catch (error) {
     console.error("LOGIN ERROR:", error);
-    return res.status(500).json({ message: "Server error during login." });
+    return res.status(500).json({
+      message: "Server error during login.",
+      error: error.message
+    });
   }
 });
 
