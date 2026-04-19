@@ -1,12 +1,14 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+
+const API_URL =
+  (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
 
 export interface Product {
-  id: string;
+  id: number;
   name: string;
   category: string;
   price: number;
   stock: number;
-  cost: number;
 }
 
 export interface CartItem {
@@ -14,13 +16,22 @@ export interface CartItem {
   quantity: number;
 }
 
+export interface TransactionItem {
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
 export interface Transaction {
   id: string;
-  date: string;
-  customer: string;
-  items: CartItem[];
+  customerName: string;
   amount: number;
-  status: 'Confirm' | 'Pending';
+  amountPaid: number;
+  changeAmount: number;
+  date: string;
+  status: string;
+  items: TransactionItem[];
 }
 
 interface AppContextType {
@@ -28,140 +39,162 @@ interface AppContextType {
   cart: CartItem[];
   transactions: Transaction[];
   addToCart: (product: Product, quantity: number) => void;
-  removeFromCart: (productId: string) => void;
-  updateCartQuantity: (productId: string, quantity: number) => void;
+  removeFromCart: (productId: number) => void;
+  updateCartQuantity: (productId: number, quantity: number) => void;
   clearCart: () => void;
-  confirmPurchase: (customer: string) => void;
-  updateProduct: (id: string, updates: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
-  addProduct: (product: Omit<Product, 'id'>) => void;
+  confirmPurchase: (amountPaid: number) => Promise<{ receipt_number: string } | undefined>;
+  refreshProducts: () => Promise<void>;
+  refreshTransactions: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [products, setProducts] = useState<Product[]>([
-    { id: '1', name: 'Plastic Folder (A4)', category: 'Offices Supplies', price: 25, stock: 150, cost: 15 },
-    { id: '2', name: 'Clear Plastic Envelopes', category: 'Office Supplies', price: 35, stock: 200, cost: 20 },
-    { id: '3', name: 'Plastic Binders', category: 'Office Supplies', price: 45, stock: 120, cost: 30 },
-    { id: '4', name: 'Plastic Storage', category: 'Storage', price: 150, stock: 80, cost: 100 },
-    { id: '5', name: 'Plastic Dividers', category: 'Offices Supplies', price: 30, stock: 180, cost: 18 },
-    { id: '6', name: 'Document Organizer', category: 'Office Supplies', price: 85, stock: 60, cost: 55 },
-    { id: '7', name: 'File Folders Set', category: 'Offices Supplies', price: 120, stock: 90, cost: 80 },
-    { id: '8', name: 'Plastic Sleeves', category: 'Office Supplies', price: 40, stock: 220, cost: 25 },
-    { id: '9', name: 'Storage Boxes', category: 'Storage', price: 180, stock: 45, cost: 120 },
-    { id: '10', name: 'Index Dividers', category: 'Office Supplies', price: 55, stock: 140, cost: 35 },
-    { id: '11', name: 'Expandable Folders', category: 'Offices Supplies', price: 95, stock: 75, cost: 65 },
-    { id: '12', name: 'Plastic Clips', category: 'Office Supplies', price: 20, stock: 250, cost: 12 },
-  ]);
-
+  const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  
-  const [transactions, setTransactions] = useState<Transaction[]>([
-    { 
-      id: 'TR-001', 
-      date: '02-14-2026', 
-      customer: 'John Doe', 
-      amount: 299, 
-      status: 'Confirm', 
-      items: []
-    },
-    { 
-      id: 'TR-002', 
-      date: '02-14-2026', 
-      customer: 'Jane Smith', 
-      amount: 450, 
-      status: 'Confirm', 
-      items: []
-    },
-    { 
-      id: 'TR-003', 
-      date: '02-13-2026', 
-      customer: 'Bob Wilson', 
-      amount: 825, 
-      status: 'Pending', 
-      items: []
-    },
-  ]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-  const addToCart = (product: Product, quantity: number) => {
-    setCart(prevCart => {
-      const existingItem = prevCart.find(item => item.product.id === product.id);
-      if (existingItem) {
-        return prevCart.map(item =>
-          item.product.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
+  useEffect(() => {
+    refreshProducts();
+    refreshTransactions();
+  }, []);
+
+  async function refreshProducts() {
+    try {
+      const res = await fetch(`${API_URL}/products`);
+      const data = await res.json();
+
+      setProducts(
+        data.map((item: any) => ({
+          id: item.product_id,
+          name: item.display_name,
+          category: item.group_name,
+          price: Number(item.price || 0),
+          stock: Number(item.stock_qty || 0),
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to load products:', error);
+    }
+  }
+
+  async function refreshTransactions() {
+    try {
+      const res = await fetch(`${API_URL}/transactions`);
+      const data = await res.json();
+
+      setTransactions(
+        data.map((row: any) => ({
+          id: row.receipt_number,
+          customerName: row.customer_name || 'Guest',
+          amount: Number(row.total_amount || 0),
+          amountPaid: Number(row.amount_paid || 0),
+          changeAmount: Number(row.change_amount || 0),
+          date: row.sale_datetime,
+          status: row.status === 'completed' ? 'Confirm' : row.status,
+          items: Array.isArray(row.items)
+            ? row.items.map((item: any) => ({
+                productName: item.product_name,
+                quantity: Number(item.quantity || 0),
+                unitPrice: Number(item.unit_price || 0),
+                lineTotal: Number(item.line_total || 0),
+              }))
+            : [],
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to load transactions:', error);
+    }
+  }
+
+  function addToCart(product: Product, quantity: number) {
+    setCart((prev) => {
+      const existing = prev.find((item) => item.product.id === product.id);
+
+      if (existing) {
+        const newQty = Math.min(existing.quantity + quantity, product.stock);
+        return prev.map((item) =>
+          item.product.id === product.id ? { ...item, quantity: newQty } : item
         );
       }
-      return [...prevCart, { product, quantity }];
+
+      return [...prev, { product, quantity }];
     });
-  };
+  }
 
-  const removeFromCart = (productId: string) => {
-    setCart(prevCart => prevCart.filter(item => item.product.id !== productId));
-  };
+  function removeFromCart(productId: number) {
+    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+  }
 
-  const updateCartQuantity = (productId: string, quantity: number) => {
+  function updateCartQuantity(productId: number, quantity: number) {
     if (quantity <= 0) {
       removeFromCart(productId);
       return;
     }
-    setCart(prevCart =>
-      prevCart.map(item =>
-        item.product.id === productId ? { ...item, quantity } : item
+
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId
+          ? {
+              ...item,
+              quantity: Math.min(quantity, item.product.stock),
+            }
+          : item
       )
     );
-  };
+  }
 
-  const clearCart = () => {
+  function clearCart() {
     setCart([]);
-  };
+  }
 
-  const confirmPurchase = (customer: string) => {
-    const total = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
-    const newTransaction: Transaction = {
-      id: `TR-${String(transactions.length + 1).padStart(3, '0')}`,
-      date: new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
-      customer,
-      items: [...cart],
-      amount: total,
-      status: 'Confirm',
-    };
+  async function confirmPurchase(amountPaid: number) {
+    if (cart.length === 0) return;
 
-    setTransactions(prev => [newTransaction, ...prev]);
-
-    // Update inventory
-    setProducts(prevProducts =>
-      prevProducts.map(product => {
-        const cartItem = cart.find(item => item.product.id === product.id);
-        if (cartItem) {
-          return { ...product, stock: product.stock - cartItem.quantity };
-        }
-        return product;
-      })
+    const totalAmount = cart.reduce(
+      (sum, item) => sum + item.product.price * item.quantity,
+      0
     );
 
-    clearCart();
-  };
+    if (amountPaid < totalAmount) {
+      alert('Amount paid is not enough.');
+      return;
+    }
 
-  const updateProduct = (id: string, updates: Partial<Product>) => {
-    setProducts(prev =>
-      prev.map(product => (product.id === id ? { ...product, ...updates } : product))
-    );
-  };
+    try {
+      const payload = {
+        customerName: 'Guest',
+        amount_paid: amountPaid,
+        items: cart.map((item) => ({
+          product_id: item.product.id,
+          quantity: item.quantity,
+        })),
+      };
 
-  const deleteProduct = (id: string) => {
-    setProducts(prev => prev.filter(product => product.id !== id));
-  };
+      const res = await fetch(`${API_URL}/sales`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
 
-  const addProduct = (product: Omit<Product, 'id'>) => {
-    const newProduct = {
-      ...product,
-      id: String(Date.now()),
-    };
-    setProducts(prev => [...prev, newProduct]);
-  };
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to save sale');
+      }
+
+      clearCart();
+      await refreshProducts();
+      await refreshTransactions();
+
+      return { receipt_number: data.receipt_number };
+    } catch (error: any) {
+      console.error(error);
+      alert(error.message || 'Failed to complete transaction.');
+    }
+  }
 
   return (
     <AppContext.Provider
@@ -174,9 +207,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updateCartQuantity,
         clearCart,
         confirmPurchase,
-        updateProduct,
-        deleteProduct,
-        addProduct,
+        refreshProducts,
+        refreshTransactions,
       }}
     >
       {children}
@@ -186,8 +218,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 export function useApp() {
   const context = useContext(AppContext);
+
   if (!context) {
     throw new Error('useApp must be used within AppProvider');
   }
+
   return context;
 }

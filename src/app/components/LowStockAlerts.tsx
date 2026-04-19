@@ -1,195 +1,357 @@
-import { Card } from './ui/card';
-import { Button } from './ui/button';
-import { AlertTriangle, TrendingDown, Package } from 'lucide-react';
-import { useApp } from '../context/AppContext';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Card } from "./ui/card";
+import { Button } from "./ui/button";
+import { AlertTriangle, Bell, RefreshCw, Package2, Siren } from "lucide-react";
+
+const API_URL =
+  (import.meta as any).env?.VITE_API_URL || "http://localhost:5000";
+
+interface StockAlertItem {
+  product_id: number;
+  display_name: string;
+  group_name: string;
+  stock_qty: number;
+  reorder_level: number;
+}
+
+type AlertFilter = "critical" | "low";
 
 export function LowStockAlerts() {
-  const { products } = useApp();
-  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [items, setItems] = useState<StockAlertItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
+  const [selectedFilter, setSelectedFilter] = useState<AlertFilter>("critical");
+  const [notification, setNotification] = useState<{
+    type: "low" | "critical";
+    message: string;
+  } | null>(null);
 
-  // Filter products with stock below 50
-  const lowStockProducts = products.filter(p => p.stock < 50);
+  const previousMapRef = useRef<Record<number, number>>({});
 
-  const getAlertLevel = (stock: number) => {
-    if (stock < 20) return { 
-      borderColor: 'border-l-red-500', 
-      bgColor: 'bg-gradient-to-br from-red-50 to-red-100',
-      iconBg: 'bg-gradient-to-br from-red-500 to-red-600',
-      textColor: 'text-red-700',
-      label: 'Current Stock: 0 Units',
-      tag: 'Critical Stock',
-      tagBg: 'bg-red-500',
-      pulseColor: 'bg-red-400'
-    };
-    if (stock < 35) return { 
-      borderColor: 'border-l-orange-400', 
-      bgColor: 'bg-gradient-to-br from-orange-50 to-orange-100',
-      iconBg: 'bg-gradient-to-br from-orange-400 to-orange-500',
-      textColor: 'text-orange-700',
-      label: `Current Stock: ${stock} Units`,
-      tag: 'Low Stock',
-      tagBg: 'bg-orange-500',
-      pulseColor: 'bg-orange-300'
-    };
-    return { 
-      borderColor: 'border-l-yellow-400', 
-      bgColor: 'bg-gradient-to-br from-yellow-50 to-yellow-100',
-      iconBg: 'bg-gradient-to-br from-yellow-400 to-yellow-500',
-      textColor: 'text-yellow-700',
-      label: `Current Stock: ${stock} Units`,
-      tag: 'Medium Stock',
-      tagBg: 'bg-yellow-500',
-      pulseColor: 'bg-yellow-300'
-    };
+  const normalizeItems = (data: any[]): StockAlertItem[] => {
+    return (data || []).map((item: any) => ({
+      product_id: Number(item.product_id),
+      display_name: item.display_name,
+      group_name: item.group_name,
+      stock_qty: Number(item.stock_qty || 0),
+      reorder_level: Number(item.reorder_level || 0),
+    }));
   };
+
+  const getCriticalThreshold = (reorderLevel: number) => {
+    return Math.max(1, Math.floor(reorderLevel * 0.4));
+  };
+
+  const checkForNewNotifications = (currentItems: StockAlertItem[]) => {
+    const previousMap = previousMapRef.current;
+    let criticalTriggered = 0;
+    let lowTriggered = 0;
+
+    for (const item of currentItems) {
+      const previousStock = previousMap[item.product_id];
+      const criticalThreshold = getCriticalThreshold(item.reorder_level);
+      const lowThreshold = item.reorder_level;
+
+      const wasCritical =
+        previousStock !== undefined && previousStock <= criticalThreshold;
+      const isCritical = item.stock_qty <= criticalThreshold;
+
+      const wasLow =
+        previousStock !== undefined &&
+        previousStock > criticalThreshold &&
+        previousStock <= lowThreshold;
+      const isLow =
+        item.stock_qty > criticalThreshold && item.stock_qty <= lowThreshold;
+
+      if (!wasCritical && isCritical) {
+        criticalTriggered++;
+      } else if (!wasLow && isLow) {
+        lowTriggered++;
+      }
+    }
+
+    if (criticalTriggered > 0) {
+      setNotification({
+        type: "critical",
+        message: `${criticalTriggered} product${
+          criticalTriggered > 1 ? "s are" : " is"
+        } now in critical stock.`,
+      });
+    } else if (lowTriggered > 0) {
+      setNotification({
+        type: "low",
+        message: `${lowTriggered} product${
+          lowTriggered > 1 ? "s are" : " is"
+        } now low on stock.`,
+      });
+    }
+
+    const newMap: Record<number, number> = {};
+    for (const item of currentItems) {
+      newMap[item.product_id] = item.stock_qty;
+    }
+    previousMapRef.current = newMap;
+  };
+
+  const loadAlerts = async (showLoader = false) => {
+    try {
+      if (showLoader) setLoading(true);
+      else setRefreshing(true);
+
+      const res = await fetch(`${API_URL}/low-stock`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to load stock alerts.");
+      }
+
+      const normalized = normalizeItems(data);
+      checkForNewNotifications(normalized);
+
+      setItems(normalized);
+      setLastUpdated(new Date().toLocaleString());
+    } catch (error) {
+      console.error("LOW STOCK ALERTS ERROR:", error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAlerts(true);
+
+    const interval = setInterval(() => {
+      loadAlerts(false);
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!notification) return;
+
+    const timer = setTimeout(() => {
+      setNotification(null);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [notification]);
+
+  const { criticalItems, lowItems } = useMemo(() => {
+    const critical = items.filter(
+      (item) => item.stock_qty <= getCriticalThreshold(item.reorder_level)
+    );
+
+    const low = items.filter(
+      (item) =>
+        item.stock_qty > getCriticalThreshold(item.reorder_level) &&
+        item.stock_qty <= item.reorder_level
+    );
+
+    return {
+      criticalItems: critical,
+      lowItems: low,
+    };
+  }, [items]);
+
+  const displayedItems =
+    selectedFilter === "critical" ? criticalItems : lowItems;
 
   return (
     <div className="max-w-7xl">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-3 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl">
-          <AlertTriangle className="size-6 text-white" />
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-red-500 rounded-xl">
+            <Bell className="size-6 text-white" />
+          </div>
+
+          <div>
+            <h2 className="text-2xl font-semibold text-gray-800">
+              Low Stock Alerts
+            </h2>
+            <p className="text-sm text-gray-500">
+              Checks stock in the background without reloading the whole page
+            </p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-800">Low Stock Alerts</h2>
-          <p className="text-sm text-gray-500">{lowStockProducts.length} items need attention</p>
-        </div>
+
+        <Button
+          onClick={() => loadAlerts(false)}
+          className="bg-[#4A90E2] hover:bg-[#357ABD] text-white"
+          disabled={refreshing}
+        >
+          <RefreshCw className={`size-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Refreshing..." : "Refresh"}
+        </Button>
       </div>
 
-      {lowStockProducts.length === 0 ? (
-        <Card className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-2xl p-16 text-center shadow-lg">
-          <div className="flex flex-col items-center">
-            <div className="p-4 bg-green-500 rounded-full mb-4">
-              <Package className="size-12 text-white" />
-            </div>
-            <h3 className="text-xl font-semibold text-green-800 mb-2">All Stock Levels Healthy!</h3>
-            <p className="text-green-700">No low stock alerts at the moment. All products are well stocked.</p>
+      {notification && (
+        <div
+          className={`mb-6 rounded-2xl px-4 py-3 text-white shadow-lg ${
+            notification.type === "critical"
+              ? "bg-gradient-to-r from-red-500 to-red-600"
+              : "bg-gradient-to-r from-orange-400 to-yellow-500"
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            {notification.type === "critical" ? (
+              <Siren className="size-5" />
+            ) : (
+              <AlertTriangle className="size-5" />
+            )}
+            <span className="font-medium">{notification.message}</span>
           </div>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-2 gap-6">
-          {lowStockProducts.map((product) => {
-            const alertLevel = getAlertLevel(product.stock);
-            return (
-              <Card 
-                key={product.id} 
-                className={`${alertLevel.bgColor} border-l-4 ${alertLevel.borderColor} shadow-lg hover:shadow-xl rounded-2xl overflow-hidden transition-all hover:scale-[1.02]`}
-              >
-                <div className="p-6">
-                  <div className="flex items-start gap-4">
-                    <div className="relative">
-                      <div className={`${alertLevel.iconBg} p-4 rounded-xl shadow-md`}>
-                        <TrendingDown className="size-7 text-white" />
-                      </div>
-                      {product.stock < 20 && (
-                        <span className="absolute -top-1 -right-1 flex size-4">
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${alertLevel.pulseColor} opacity-75`}></span>
-                          <span className={`relative inline-flex rounded-full size-4 ${alertLevel.tagBg}`}></span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-bold text-lg mb-2 text-gray-800">{product.name}</h3>
-                      <div className="space-y-2">
-                        <p className={`text-sm font-semibold ${alertLevel.textColor}`}>
-                          {alertLevel.label}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Category:</span> {product.category}
-                        </p>
-                        <div className="flex items-center justify-between pt-3 border-t border-gray-200">
-                          <span className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-md ${alertLevel.tagBg}`}>
-                            {alertLevel.tag}
-                          </span>
-                          <Button 
-                            size="sm" 
-                            className="text-xs bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-sm"
-                            onClick={() => setSelectedProduct(product)}
-                          >
-                            View Details
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
         </div>
       )}
 
-      {/* Product Details Dialog */}
-      <Dialog open={!!selectedProduct} onOpenChange={() => setSelectedProduct(null)}>
-        <DialogContent>
-          <DialogTitle>Product Alert Details</DialogTitle>
-          <DialogDescription>
-            Complete information about this low stock product
-          </DialogDescription>
-
-          {selectedProduct && (
-            <div className="space-y-4 py-4">
-              <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="size-5 text-red-500" />
-                  <p className="font-semibold text-red-700">Low Stock Alert</p>
-                </div>
-                <p className="text-sm text-red-600">
-                  This product is running low and needs restocking soon
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <button
+          onClick={() => setSelectedFilter("critical")}
+          className={`text-left transition-all ${
+            selectedFilter === "critical"
+              ? "ring-4 ring-red-200 scale-[1.01]"
+              : "opacity-90 hover:opacity-100"
+          }`}
+        >
+          <Card className="p-5 rounded-2xl border-0 shadow-lg bg-gradient-to-r from-red-500 to-red-600 text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-red-100">Critical Stock</p>
+                <p className="text-3xl font-bold">{criticalItems.length}</p>
+                <p className="text-xs text-red-100 mt-1">
+                  Click to view critical items
                 </p>
               </div>
+              <Siren className="size-10 text-white/90" />
+            </div>
+          </Card>
+        </button>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">Product Name</p>
-                  <p className="font-semibold">{selectedProduct.name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Category</p>
-                  <p className="font-semibold">{selectedProduct.category}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Current Stock</p>
-                  <p className="font-semibold text-red-600">{selectedProduct.stock} units</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Price</p>
-                  <p className="font-semibold">₱{selectedProduct.price}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Cost</p>
-                  <p className="font-semibold">₱{selectedProduct.cost}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Profit Margin</p>
-                  <p className="font-semibold text-green-600">
-                    {((selectedProduct.price - selectedProduct.cost) / selectedProduct.price * 100).toFixed(1)}%
-                  </p>
-                </div>
+        <button
+          onClick={() => setSelectedFilter("low")}
+          className={`text-left transition-all ${
+            selectedFilter === "low"
+              ? "ring-4 ring-yellow-200 scale-[1.01]"
+              : "opacity-90 hover:opacity-100"
+          }`}
+        >
+          <Card className="p-5 rounded-2xl border-0 shadow-lg bg-gradient-to-r from-yellow-400 to-orange-400 text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-yellow-50">Low Stock</p>
+                <p className="text-3xl font-bold">{lowItems.length}</p>
+                <p className="text-xs text-yellow-50 mt-1">
+                  Click to view low stock items
+                </p>
               </div>
+              <Package2 className="size-10 text-white/90" />
+            </div>
+          </Card>
+        </button>
+      </div>
 
-              <div className="border-t pt-4">
-                <p className="text-sm font-medium mb-2">Recommended Actions:</p>
-                <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
-                  <li>Contact supplier for restock</li>
-                  <li>Consider ordering at least 50 units</li>
-                  <li>Review sales trend to optimize stock levels</li>
-                </ul>
-              </div>
+      {loading ? (
+        <Card className="p-8 rounded-2xl text-center text-gray-500">
+          Loading stock alerts...
+        </Card>
+      ) : items.length === 0 ? (
+        <Card className="p-8 rounded-2xl text-center border border-green-200 bg-green-50">
+          <p className="text-green-700 font-medium">
+            All products are above reorder level.
+          </p>
+          <p className="text-sm text-green-600 mt-1">
+            No low stock or critical stock items right now.
+          </p>
+        </Card>
+      ) : (
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            {selectedFilter === "critical" ? (
+              <>
+                <Siren className="size-5 text-red-600" />
+                <h3 className="text-xl font-semibold text-red-600">
+                  Critical Stock Items
+                </h3>
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="size-5 text-orange-500" />
+                <h3 className="text-xl font-semibold text-orange-500">
+                  Low Stock Items
+                </h3>
+              </>
+            )}
+          </div>
+
+          {displayedItems.length === 0 ? (
+            <Card className="p-4 rounded-xl text-sm text-gray-500">
+              {selectedFilter === "critical"
+                ? "No critical items right now."
+                : "No low stock items right now."}
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {displayedItems.map((item) => (
+                <Card
+                  key={item.product_id}
+                  className={`p-5 rounded-2xl shadow-sm ${
+                    selectedFilter === "critical"
+                      ? "border border-red-200 bg-red-50"
+                      : "border border-yellow-200 bg-yellow-50"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="font-semibold text-gray-900">
+                        {item.display_name}
+                      </p>
+                      <p className="text-sm text-gray-500">{item.group_name}</p>
+                    </div>
+
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-bold text-white ${
+                        selectedFilter === "critical"
+                          ? "bg-red-600"
+                          : "bg-yellow-500"
+                      }`}
+                    >
+                      {selectedFilter === "critical" ? "CRITICAL" : "LOW"}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="bg-white rounded-xl p-3 border">
+                      <p className="text-xs text-gray-500">Current Stock</p>
+                      <p
+                        className={`text-2xl font-bold ${
+                          selectedFilter === "critical"
+                            ? "text-red-600"
+                            : "text-orange-500"
+                        }`}
+                      >
+                        {item.stock_qty}
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-xl p-3 border">
+                      <p className="text-xs text-gray-500">Reorder Level</p>
+                      <p className="text-2xl font-bold text-gray-800">
+                        {item.reorder_level}
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              ))}
             </div>
           )}
+        </section>
+      )}
 
-          <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setSelectedProduct(null)}>
-              Close
-            </Button>
-            <Button className="bg-blue-500 hover:bg-blue-600">
-              Request Restock
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <div className="mt-6 text-xs text-gray-400">
+        Last updated: {lastUpdated || "—"}
+      </div>
     </div>
   );
 }

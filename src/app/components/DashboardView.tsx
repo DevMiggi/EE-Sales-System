@@ -3,24 +3,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { useApp } from '../context/AppContext';
 import { DollarSign, Package, Grid3x3 } from 'lucide-react';
 
-interface DashboardViewProps {
-  onPurchase: (itemName: string) => void;
-}
-
-export function DashboardView({ onPurchase }: DashboardViewProps) {
+export function DashboardView() {
   const { products, transactions } = useApp();
 
-  // Calculate stats
   const totalSales = transactions
     .filter(t => t.status === 'Confirm')
     .reduce((sum, t) => sum + t.amount, 0);
-  
+
   const totalItems = products.length;
-  
+
   const categories = [...new Set(products.map(p => p.category))];
   const totalCategories = categories.length;
 
-  // Calculate fast-moving products (sort by lowest stock)
   const fastMovingProducts = [...products]
     .sort((a, b) => a.stock - b.stock)
     .slice(0, 4);
@@ -29,7 +23,6 @@ export function DashboardView({ onPurchase }: DashboardViewProps) {
     <div className="max-w-7xl">
       <h2 className="text-2xl font-medium mb-6 text-gray-800">Dashboard Overview</h2>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-6 mb-8">
         <Card className="relative p-8 bg-gradient-to-br from-green-500 to-green-600 text-white shadow-lg border-0 rounded-2xl overflow-hidden">
           <div className="absolute top-0 right-0 opacity-20">
@@ -41,7 +34,7 @@ export function DashboardView({ onPurchase }: DashboardViewProps) {
             <p className="text-xs text-green-100">+12.5% from last month</p>
           </div>
         </Card>
-        
+
         <Card className="relative p-8 bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg border-0 rounded-2xl overflow-hidden">
           <div className="absolute top-0 right-0 opacity-20">
             <Package className="size-32 -mr-4 -mt-4" />
@@ -52,7 +45,7 @@ export function DashboardView({ onPurchase }: DashboardViewProps) {
             <p className="text-xs text-blue-100">Active products in inventory</p>
           </div>
         </Card>
-        
+
         <Card className="relative p-8 bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg border-0 rounded-2xl overflow-hidden">
           <div className="absolute top-0 right-0 opacity-20">
             <Grid3x3 className="size-32 -mr-4 -mt-4" />
@@ -65,7 +58,6 @@ export function DashboardView({ onPurchase }: DashboardViewProps) {
         </Card>
       </div>
 
-      {/* Fast-Moving Products */}
       <Card className="bg-white shadow-lg border-0 rounded-2xl overflow-hidden">
         <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
           <h3 className="text-lg font-semibold text-gray-800">Fast-Moving Products</h3>
@@ -101,7 +93,9 @@ export function DashboardView({ onPurchase }: DashboardViewProps) {
                     {product.stock}
                   </span>
                 </TableCell>
-                <TableCell className="py-4 text-gray-800 font-bold">₱{product.price.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</TableCell>
+                <TableCell className="py-4 text-gray-800 font-bold">
+                  ₱{product.price.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
