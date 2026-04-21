@@ -4,7 +4,7 @@ interface User {
   id: number | string;
   email: string;
   name: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'cashier';
 }
 
 interface AuthContextType {
@@ -24,21 +24,40 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+export const getStoredToken = () => localStorage.getItem('ee_token');
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('ee_user');
+    const storedToken = localStorage.getItem('ee_token');
 
-    if (storedUser) {
+    if (storedUser && storedToken) {
       try {
-        setUser(JSON.parse(storedUser));
+        const parsedUser = JSON.parse(storedUser) as User;
+
+        if (
+          parsedUser &&
+          parsedUser.id !== undefined &&
+          parsedUser.email &&
+          parsedUser.name &&
+          (parsedUser.role === 'admin' || parsedUser.role === 'cashier')
+        ) {
+          setUser(parsedUser);
+        } else {
+          localStorage.removeItem('ee_user');
+          localStorage.removeItem('ee_token');
+        }
       } catch (error) {
         console.error('Error parsing stored user:', error);
         localStorage.removeItem('ee_user');
         localStorage.removeItem('ee_token');
       }
+    } else {
+      localStorage.removeItem('ee_user');
+      localStorage.removeItem('ee_token');
     }
 
     setTimeout(() => {

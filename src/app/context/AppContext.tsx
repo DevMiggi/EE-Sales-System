@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 
 const API_URL =
-  (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+  (import.meta as any).env?.VITE_API_URL || "http://localhost:5000";
+console.log("APP API URL:", API_URL);
 
 export interface Product {
   id: number;
@@ -9,6 +10,7 @@ export interface Product {
   category: string;
   price: number;
   stock: number;
+  barcode?: string;
 }
 
 export interface CartItem {
@@ -42,7 +44,9 @@ interface AppContextType {
   removeFromCart: (productId: number) => void;
   updateCartQuantity: (productId: number, quantity: number) => void;
   clearCart: () => void;
-  confirmPurchase: (amountPaid: number) => Promise<{ receipt_number: string } | undefined>;
+  confirmPurchase: (
+    amountPaid: number
+  ) => Promise<{ receipt_number: string } | undefined>;
   refreshProducts: () => Promise<void>;
   refreshTransactions: () => Promise<void>;
 }
@@ -60,61 +64,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function refreshProducts() {
-    try {
-      const res = await fetch(`${API_URL}/products`);
-      const data = await res.json();
+  const res = await fetch(`${API_URL}/products?t=${Date.now()}`);
 
-      setProducts(
-        data.map((item: any) => ({
-          id: item.product_id,
-          name: item.display_name,
-          category: item.group_name,
-          price: Number(item.price || 0),
-          stock: Number(item.stock_qty || 0),
-        }))
-      );
-    } catch (error) {
-      console.error('Failed to load products:', error);
-    }
-  }
+  const data = await res.json();
+
+  console.log("LIVE PRODUCTS:", data);
+
+  setProducts(
+    data.map((item: any) => ({
+      id: Number(item.product_id),
+      name: item.display_name,
+      category: item.group_name,
+      price: Number(item.price || 0),
+      stock: Number(item.stock_qty || 0),
+      barcode: item.barcode ? String(item.barcode).trim() : "",
+    }))
+  );
+}
 
   async function refreshTransactions() {
-    try {
-      const res = await fetch(`${API_URL}/transactions`);
-      const data = await res.json();
+    const res = await fetch(`${API_URL}/transactions`);
+    const data = await res.json();
 
-      setTransactions(
-        data.map((row: any) => ({
-          id: row.receipt_number,
-          customerName: row.customer_name || 'Guest',
-          amount: Number(row.total_amount || 0),
-          amountPaid: Number(row.amount_paid || 0),
-          changeAmount: Number(row.change_amount || 0),
-          date: row.sale_datetime,
-          status: row.status === 'completed' ? 'Confirm' : row.status,
-          items: Array.isArray(row.items)
-            ? row.items.map((item: any) => ({
-                productName: item.product_name,
-                quantity: Number(item.quantity || 0),
-                unitPrice: Number(item.unit_price || 0),
-                lineTotal: Number(item.line_total || 0),
-              }))
-            : [],
-        }))
-      );
-    } catch (error) {
-      console.error('Failed to load transactions:', error);
-    }
+    setTransactions(
+      data.map((row: any) => ({
+        id: row.receipt_number,
+        customerName: "Guest",
+        amount: Number(row.total_amount),
+        amountPaid: Number(row.amount_paid),
+        changeAmount: Number(row.change_amount),
+        date: row.sale_datetime,
+        status: row.status,
+        items: row.items || [],
+      }))
+    );
   }
 
   function addToCart(product: Product, quantity: number) {
     setCart((prev) => {
-      const existing = prev.find((item) => item.product.id === product.id);
+      const existing = prev.find((x) => x.product.id === product.id);
 
       if (existing) {
-        const newQty = Math.min(existing.quantity + quantity, product.stock);
-        return prev.map((item) =>
-          item.product.id === product.id ? { ...item, quantity: newQty } : item
+        return prev.map((x) =>
+          x.product.id === product.id
+            ? { ...x, quantity: x.quantity + quantity }
+            : x
         );
       }
 
@@ -123,7 +117,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   function removeFromCart(productId: number) {
-    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    setCart((prev) => prev.filter((x) => x.product.id !== productId));
   }
 
   function updateCartQuantity(productId: number, quantity: number) {
@@ -133,13 +127,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     setCart((prev) =>
-      prev.map((item) =>
-        item.product.id === productId
-          ? {
-              ...item,
-              quantity: Math.min(quantity, item.product.stock),
-            }
-          : item
+      prev.map((x) =>
+        x.product.id === productId ? { ...x, quantity } : x
       )
     );
   }
@@ -151,49 +140,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   async function confirmPurchase(amountPaid: number) {
     if (cart.length === 0) return;
 
-    const totalAmount = cart.reduce(
-      (sum, item) => sum + item.product.price * item.quantity,
-      0
-    );
+    const userRaw = localStorage.getItem("ee_user");
 
-    if (amountPaid < totalAmount) {
-      alert('Amount paid is not enough.');
+    if (!userRaw) {
+      alert("User not logged in.");
       return;
     }
 
-    try {
-      const payload = {
-        customerName: 'Guest',
-        amount_paid: amountPaid,
-        items: cart.map((item) => ({
-          product_id: item.product.id,
-          quantity: item.quantity,
-        })),
-      };
+    const user = JSON.parse(userRaw);
 
-      const res = await fetch(`${API_URL}/sales`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+    const payload = {
+      cashier_id: user.id,
+      amount_paid: amountPaid,
+      items: cart.map((item) => ({
+        product_id: item.product.id,
+        quantity: item.quantity,
+      })),
+    };
 
-      const data = await res.json();
+    const res = await fetch(`${API_URL}/sales`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      if (!res.ok) {
-        throw new Error(data.message || 'Failed to save sale');
-      }
+    const data = await res.json();
 
-      clearCart();
-      await refreshProducts();
-      await refreshTransactions();
-
-      return { receipt_number: data.receipt_number };
-    } catch (error: any) {
-      console.error(error);
-      alert(error.message || 'Failed to complete transaction.');
+    if (!res.ok) {
+      alert(data.message || "Failed sale");
+      return;
     }
+
+    clearCart();
+    await refreshProducts();
+    await refreshTransactions();
+
+    return {
+      receipt_number: data.receipt_number,
+    };
   }
 
   return (
@@ -220,7 +204,7 @@ export function useApp() {
   const context = useContext(AppContext);
 
   if (!context) {
-    throw new Error('useApp must be used within AppProvider');
+    throw new Error("useApp must be used inside AppProvider");
   }
 
   return context;
